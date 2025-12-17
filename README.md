@@ -132,6 +132,99 @@ You can add filter criteria as well, as we sometimes want to make sure that qual
 ```
 here, we want to make sure that the `qa_value` is larger than 0.3 and that the methane mixing ratio is within a reasonable range (be careful doing things like this, just added for demonstration).
 
+## How to run the modularized script from within python
+Loading the modularized julia script exposes two functions: run_gridding (rectangular grid) and run_gridding_km (sinusoidal km-scale grid). The JSON dictionaries can have the same structure, however, the "folder" key is not used by the two functions as a list of files is expected as input. 
+The functions can be used from python using the juliacall package:
+
+```
+from juliacall import Main as jl
+jl.include("grid_S5L2_Dates_module.jl")
+
+files_in = ["/path/to/your/file_1.nc", "/path/to/your/file_2.nc"]
+
+res = jl.S5Grid.run_gridding(files_in,
+    json_dict="jsonFiles/variable_dict.json",
+    monthly=False, 
+    compSTD=True,
+    latMin=35., 
+    latMax=60.,  
+    lonMin=0., 
+    lonMax=45., 
+    dLat=0.1, 
+    dLon=0.1, 
+    startDate_str="2025-12-14", 
+    stopDate_str="2025-12-15", 
+    dDays=2, 
+    oversample_temporal=1.0,
+    FillValue=-999
+)
+```
+The output consists of lat, lon, time, averaged_data [time, lon, lat, variables],  n (number of averaged soundings per grid cell) [time, lon, lat], and optionally: std_data [time, lon, lat, variables] (when compSTD is set to true).
+       
+
+The difference in the run_gridding_km (sinusoidal km-scale grid) function with respect to original version is that dLat/dLon are not needed as input anymore as both are now controlled by target_km.
+
+```
+from juliacall import Main as jl
+jl.include("grid_S5L2_Dates_module.jl")
+
+files_in = ["/path/to/your/file_1.nc", "/path/to/your/file_2.nc"]
+
+res = jl.S5Grid.run_gridding_km(files_in,
+    json_dict="jsonFiles/variable_dict.json",
+    target_km=10.0,
+    monthly=False, 
+    compSTD=True,
+    latMin=35., 
+    latMax=60.,  
+    lonMin=0., 
+    lonMax=45., 
+    startDate_str="2015-11-24", 
+    stopDate_str="2015-11-26", 
+    dDays=2, 
+    oversample_temporal=1.0,
+    FillValue=-999
+)
+```
+
+The output is a little bit more complex for this function as we do not have a rectangular grid anymore. Instead of a matrix array[lon, lat], ragged arrays (a vector of vectors) are used. In total the output consists of: lat_centers, n_lons_per_row, time, averaged_data [time][lat_row][lon_bin, var_idx], n (number of averaged soundings per grid cell) [time][lat_row][lon_bin], and optionally: std_data [time][lat_row][lon_bin, var_idx] (when compSTD is set to true). The longitudes are returned in a normalized format and can be converted back by:
+```
+# Assuming column (c) in a specific row (r)
+d_lon = (lon_max - lon_min) / n_lons_per_row[r]
+lon_min + (c + 0.5) * d_lon # Center Longitudes 
+lon_min + c * d_lon # Longitude boundary 1
+lon_min + (c + 1) * d_lon # Longitude boundary 2
+````
+
+A full (re-)construction of coordinates for a given variable for plotting would look like this:
+``` python
+var_idx = 0
+patches = []
+values  = []
+    
+lats = res.lat_centers
+d_lat = lats[1] - lats[0]
+    
+for r in range(len(lats)):
+    n_bins = res.n_lons_per_row[r]
+    d_lon = (lon_max - lon_min) / n_bins
+    lat_b = lats[r] - d_lat/2
+    lat_t = lats[r] + d_lat/2
+        
+    for c in range(n_bins):
+        val = res.averaged_data[time_step_idx][r][c, var_idx]
+        val = np.nan if val == -999 else val
+         
+        lon_l = lon_min + c * d_lon
+        lon_r = lon_min + (c+1) * d_lon
+        
+        # Define the 4 corners of the bin
+        vertices = [(lon_l, lat_b), (lon_r, lat_b), (lon_r, lat_t), (lon_l, lat_t)]
+        patches.append(vertices)
+        values.append(val)
+```
+
+
 ## Code of Conduct:
 Please feel free to use this tool but make sure that you help the community if you find bugs, improve it etc. Any modifications that are useful should be made publicly available, you can fork and create a pull request. Also, let us know if you find bugs. On top of that, please acknowledge the tool if you use it in publications.
 
