@@ -68,38 +68,37 @@ function getPoints!(points, vert_lat, vert_lon, n,lats_0, lons_0,lats_1, lons_1 
     end
 end
 
-# Still need to make sure the corners are read in properly!
+## this fixes a bug when boundaries coordinates are at root level:
 function getNC_var(fin, path, DD::Bool)
-    loc = split(path ,r"/")
-    #@show loc
-    if length(loc)==1
-        return fin[path].var[:]
-    elseif length(loc)>1
-        gr = []
+    loc = split(path, r"/")
+    # 1. Get the variable object regardless of depth
+    var_obj = nothing
+    if length(loc) == 1
+        var_obj = fin[path]
+    else
+        gr = fin
         for i in 1:length(loc)-1
-            if i==1
-                gr = fin.group[loc[i]]
-            else
-                gr = gr.group[loc[i]]
-            end
+            gr = gr.group[loc[i]]
         end
-	   #@show gr
-        #println(loc[end])
-        si = size(gr[loc[end]])
-        #dimnames = gr[loc[end]].dimnames
-        #println(dimnames)
+        var_obj = gr[loc[end]]
+    end
 
-        # DD means there is a 2nd index for footprint bounds of dimension 4!
-        if DD
-            if si[1]==4
-                return reshape(gr[loc[end]].var[:],4,prod(si[2:end]))'
-            elseif si[end]==4
-                return reshape(gr[loc[end]].var[:],prod(si[1:end-1]),4)
-            end
+    # 2. Unified Reshape Logic
+    si = size(var_obj)
+    raw_data = var_obj.var[:]
+
+    if DD
+        # Handle 4-corner boundary pixels
+        if si[1] == 4
+            return reshape(raw_data, 4, prod(si[2:end]))'
+        elseif si[end] == 4
+            return reshape(raw_data, prod(si[1:end-1]), 4)
         else
-	#@show gr[loc[end]]
-            return reshape(gr[loc[end]].var[:],prod(si))
+            return reshape(raw_data, prod(si[1:end-1]), si[end]) # Fallback
         end
+    else
+        # Handle standard 2D/1D data
+        return reshape(raw_data, prod(si))
     end
 end
 

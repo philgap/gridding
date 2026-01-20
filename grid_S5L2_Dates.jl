@@ -125,40 +125,40 @@ function getPoints!(points, vert_lat, vert_lon, n,lats_0, lons_0,lats_1, lons_1 
     end
 end
 
-# Still need to make sure the corners are read in properly!
+## this fixes a bug when boundaries coordinates are at root level:
 function getNC_var(fin, path, DD::Bool)
-    loc = split(path ,r"/")
-    #@show loc
-    if length(loc)==1
-        return fin[path].var[:]
-    elseif length(loc)>1
-        gr = []
+    loc = split(path, r"/")
+    # 1. Get the variable object regardless of depth
+    var_obj = nothing
+    if length(loc) == 1
+        var_obj = fin[path]
+    else
+        gr = fin
         for i in 1:length(loc)-1
-            if i==1
-                gr = fin.group[loc[i]]
-            else
-                gr = gr.group[loc[i]]
-            end
+            gr = gr.group[loc[i]]
         end
-	   #@show gr
-        #println(loc[end])
-        si = size(gr[loc[end]])
-        #dimnames = gr[loc[end]].dimnames
-        #println(dimnames)
+        var_obj = gr[loc[end]]
+    end
 
-        # DD means there is a 2nd index for footprint bounds of dimension 4!
-        if DD
-            if si[1]==4
-                return reshape(gr[loc[end]].var[:],4,prod(si[2:end]))'
-            elseif si[end]==4
-                return reshape(gr[loc[end]].var[:],prod(si[1:end-1]),4)
-            end
+    # 2. Unified Reshape Logic
+    si = size(var_obj)
+    raw_data = var_obj.var[:]
+
+    if DD
+        # Handle 4-corner boundary pixels
+        if si[1] == 4
+            return reshape(raw_data, 4, prod(si[2:end]))'
+        elseif si[end] == 4
+            return reshape(raw_data, prod(si[1:end-1]), 4)
         else
-	#@show gr[loc[end]]
-            return reshape(gr[loc[end]].var[:],prod(si))
+            return reshape(raw_data, prod(si[1:end-1]), si[end]) # Fallback
         end
+    else
+        # Handle standard 2D/1D data
+        return reshape(raw_data, prod(si))
     end
 end
+
 
 
 function getNC_attrib(fin, path, attri)
@@ -347,7 +347,7 @@ function main()
     NCDict= Dict{String, NCDatasets.CFVariable}()
     println("Creating NC datasets in output:")
     for (key, value) in dGrid
-        #println(key," ", value)
+        println(key," ", value)
         NCDict[key] = defVar(dsOut,key,Float32,("time", "lon", "lat"), deflatelevel=4, fillvalue=-999)
         if ar["compSTD"]
             key2 = key*"_std"
@@ -371,6 +371,7 @@ function main()
 
     # Just to make sure we fill in attributes first time we read actual data:
     fillAttrib = true;
+    #fillAttrib = false;
 
     # Loop through time:
     # Time counter
@@ -423,9 +424,10 @@ function main()
                     lat_in_ = getNC_var(fin, d2["lat_bnd"],true)
                     lon_in_ = getNC_var(fin, d2["lon_bnd"],true)
                     
-                    #println("Read")
+                    #println("Read dimension of bnds:")
                     dim = size(lat_in_)
-    
+                    #println(dim)
+
                     # Transpose if orders are swapped
                     if dim[1]==4
                         lat_in_ = lat_in_'
@@ -434,6 +436,7 @@ function main()
     
                     # --- convert 0–360 to –180–180 (bounds) if needed ---
                     lon_in_ = fixlon(lon_in_)
+                    #println("Reading coordinates completed.")
 
                     # Find all indices within lat/lon bounds:
                     minLat = minimum(lat_in_, dims=2)
@@ -476,7 +479,7 @@ function main()
                         # Do this onlye once:
                         if fillAttrib
                             for (key, value) in dGrid
-    		    	# Need to change this soon to just go over keys(attrib), not this hard-coded thing. Just want to avoid another fill_value!
+    		    	            # Need to change this soon to just go over keys(attrib), not this hard-coded thing. Just want to avoid another fill_value!
                                 attribs = ["units","long_name","valid_range","description","unit","longname"]
                                 for at in attribs
                                     try
@@ -491,8 +494,9 @@ function main()
                         end
     
                         for (key, value) in dGrid
-                            #println(key,", ",value)
+                            #println("Reading ", key," (",value,")")
                             mat_in[:,co]=getNC_var(fin, value,false)
+                            #println("Success")
                             co += 1
                         end
     
@@ -516,7 +520,7 @@ function main()
             end
         end
         # Filter all data, set averages, still need to change row/column order here in the future!
-        dims = size(mat_data)
+        #dims = size(mat_data)
         println("Averaging final product...")
         if maximum(mat_data_weights)>0
             dN[cT,:,:] = mat_data_weights
